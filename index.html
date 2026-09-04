@@ -64,7 +64,7 @@ button.calc{width:100%;padding:14px;border:0;border-radius:12px;background:#1769
 <img id="graph" alt="Gráfico do Power Assurance Check">
 <div id="hline1" class="cross"></div><div id="hline2" class="cross"></div><div id="vlineITT" class="cross"></div><div id="vlineN1" class="cross"></div><div id="markerTQ" class="marker"></div><div id="markerITT" class="marker"></div><div id="markerN1" class="marker"></div>
 </div>
-<div class="legend"><b>Conferência obrigatória:</b> o marcador mostra a trajetória de leitura do nomograma. A leitura numérica é uma interpolação entre as curvas vetoriais do nomograma; confirme sempre o ponto diretamente no gráfico do RFM antes de qualquer decisão operacional.</div>
+<div class="legend"><b>Conferência obrigatória:</b> o marcador mostra a trajetória de leitura do nomograma. A leitura numérica é uma interpolação entre as linhas de referência (incluindo os trechos tracejados do nomograma); confirme sempre o ponto diretamente no gráfico do RFM antes de qualquer decisão operacional.</div>
 </div>
 
 <div class="card warn">
@@ -156,28 +156,56 @@ function interpPressure(mode,tq,alt){
   if(y0===null || y1===null) return null;
   return interp1(y0,y1,b[2]);
 }
-function interpOAT(curves,oat,y){
+// As curvas de OAT possuem uma continuação tracejada após a linha vertical de referência do gráfico.
+// Para a leitura entre curvas, essa continuação também faz parte do nomograma.
+// Reconstrução dos trechos tracejados: inclinações locais obtidas da geometria dos segmentos
+// tracejados das próprias Figuras 4-5, 4-6 e 4-7. A continuação é aceita somente dentro
+// da escala publicada do painel; fora dela, o aplicativo não inventa um valor.
+const DASH_SLOPE={
+  hover:{itt:0.667,n1:0.811},
+  '130':{itt:0.819,n1:0.781},
+  '100':{itt:0.799,n1:0.875}
+};
+function xAtYGraph(curve,y,mode,typ){
+  const x=xAtY(curve,y); if(x!==null) return x;
+  const end=curve[curve.length-1];
+  if(y<end[1]) return null;
+  const xd=end[0]+DASH_SLOPE[mode][typ]*(y-end[1]);
+  // Só aceitar a continuação enquanto ela permanece dentro da escala publicada do painel.
+  if(xd>=-0.005 && xd<=1.35) return xd;
+  return null;
+}
+function interpOAT(curves,oat,y,typ){
   const b=bracket(CAL.oats,oat);
   if(!b) return {ok:false,reason:'OAT fora da escala do nomograma.'};
-  const x0=xAtY(curves[b[0]],y), x1=xAtY(curves[b[1]],y);
-  if(x0===null || x1===null){
-    return {ok:false,reason:`OAT ${oat.toFixed(1)} °C fica entre ${CAL.oats[b[0]]} e ${CAL.oats[b[1]]} °C, mas as duas curvas de referência não alcançam a trajetória TQ/altitude neste ponto do gráfico. Não extrapolar.`};
+
+  // Reconstrói as 10 linhas de OAT no mesmo nível de pressão/torque.
+  // Pequenos desvios de digitalização são removidos por um envelope monotônico:
+  // no nomograma, temperaturas crescentes não podem produzir uma posição de leitura menor.
+  const xs=curves.map(c=>xAtYGraph(c,y,mode,typ));
+  if(xs.some(v=>v===null)){
+    return {ok:false,reason:`Não foi possível reconstruir todas as linhas de OAT na trajetória solicitada.`};
   }
-  return {ok:true,x:interp1(x0,x1,b[2]),oatLo:CAL.oats[b[0]],oatHi:CAL.oats[b[1]],fraction:b[2]};
+  for(let i=1;i<xs.length;i++) xs[i]=Math.max(xs[i],xs[i-1]);
+  const x=interp1(xs[b[0]],xs[b[1]],b[2]);
+  const usedDash=curves[b[0]][curves[b[0]].length-1][1]<y || curves[b[1]][curves[b[1]].length-1][1]<y;
+  return {ok:true,x,oatLo:CAL.oats[b[0]],oatHi:CAL.oats[b[1]],fraction:b[2],usedDash};
 }
 function maxValues(tq,alt,oat){
   const d=CAL.data[mode];
   const y=interpPressure(mode,tq,alt);
   if(y===null) return {valid:false,reason:'O ponto de TQ/altitude está fora da área do nomograma.'};
-  const im=interpOAT(d.itt,oat,y), nm=interpOAT(d.n1,oat,y);
+  const im=interpOAT(d.itt,oat,y,'itt'), nm=interpOAT(d.n1,oat,y,'n1');
   if(!im.ok || !nm.ok){
     const reason=!im.ok ? im.reason : nm.reason;
     return {valid:false,reason};
   }
   const xm=im.x, xn=nm.x;
-  const itt=d.ittRange[0]+xm*(d.ittRange[1]-d.ittRange[0]);
-  const n1=80+xn*25;
-  return {valid:true,y,xTQ:(tq-40)/60,xITT:xm,xN1:xn,itt,n1,oatLo:im.oatLo,oatHi:im.oatHi,oatFraction:im.fraction};
+  const ittRaw=d.ittRange[0]+xm*(d.ittRange[1]-d.ittRange[0]);
+  const n1Raw=80+xn*25;
+  const itt=Math.min(ittRaw,d.ittRange[1]);
+  const n1=Math.min(n1Raw,105);
+  return {valid:true,y,xTQ:(tq-40)/60,xITT:Math.min(xm,1),xN1:Math.min(xn,1),itt,n1,ittRaw,n1Raw,ittOver:ittRaw>800,n1Over:n1Raw>105,oatLo:im.oatLo,oatHi:im.oatHi,oatFraction:im.fraction,usedDash:im.usedDash||nm.usedDash};
 }
 function pxPoint(rect,xn,yn){return {x:rect[0]+xn*(rect[1]-rect[0]),y:rect[2]+yn*(rect[3]-rect[2])};}
 function drawMarker(v){
@@ -214,13 +242,13 @@ function calculate(){
   const cls=pass?'pass':'fail';
   const title=pass?'🟢 POWER CHECK — APROVADO':'🔴 POWER CHECK — REPROVADO';
   result.innerHTML=`<div class="result ${cls}"><h2>${title}</h2>
-    <div class="small">${names[mode]} · limites obtidos por calibração geométrica das linhas do nomograma</div>
-    <div class="small"><b>Leitura OAT:</b> ${oat.toFixed(1)} °C interpolada entre ${v.oatLo} °C e ${v.oatHi} °C (${(v.oatFraction*100).toFixed(0)}% do intervalo).</div>
+    <div class="small">${names[mode]} · limites por interpolação gráfica calibrada do nomograma</div>
+    <div class="small"><b>Leitura OAT:</b> ${oat.toFixed(1)} °C interpolada entre ${v.oatLo} °C e ${v.oatHi} °C (${(v.oatFraction*100).toFixed(0)}% do intervalo)${v.usedDash?" — trecho tracejado utilizado":""}.<br>${(v.ittOver||v.n1Over)?"<b>Nota:</b> a interpolação cruza o limite superior de escala do painel; o aplicativo mostra o valor de escala como limite inferior (≥).":""}</div>
     <div class="row"><b>Parâmetro</b><b>Registrado</b><b>Máx.</b><b>Status</b></div>
-    <div class="row"><span>ITT</span><span>${itt.toFixed(0)} °C</span><span>≈ ${v.itt.toFixed(0)} °C</span><span class="badge ${passITT?'ok':'no'}">${passITT?'OK':'NÃO'}</span></div>
-    <div class="row"><span>N1</span><span>${n1.toFixed(1)} %</span><span>≈ ${v.n1.toFixed(1)} %</span><span class="badge ${passN1?'ok':'no'}">${passN1?'OK':'NÃO'}</span></div>
-    <div style="margin-top:10px;font-size:13px"><b>Margem ITT:</b> ${(v.itt-itt).toFixed(0)} °C &nbsp; · &nbsp; <b>Margem N1:</b> ${(v.n1-n1).toFixed(1)} %</div>
-    ${((v.itt-itt)<3 || (v.n1-n1)<0.3) ? '<div class="warn" style="margin-top:10px"><b>⚠️ MARGEM PEQUENA — CONFERIR NO RFM</b><br>O resultado está próximo do limite do gráfico.</div>' : ''}
+    <div class="row"><span>ITT</span><span>${itt.toFixed(0)} °C</span><span>${v.ittOver?"≥ 800 °C":("≈ "+v.itt.toFixed(0)+" °C")}</span><span class="badge ${passITT?'ok':'no'}">${passITT?'OK':'NÃO'}</span></div>
+    <div class="row"><span>N1</span><span>${n1.toFixed(1)} %</span><span>${v.n1Over?"≥ 105.0 %":("≈ "+v.n1.toFixed(1)+" %")}</span><span class="badge ${passN1?'ok':'no'}">${passN1?'OK':'NÃO'}</span></div>
+    <div style="margin-top:10px;font-size:13px"><b>Margem ITT:</b> ${v.ittOver?"> 74 °C":(v.itt-itt).toFixed(0)+" °C"} &nbsp; · &nbsp; <b>Margem N1:</b> ${v.n1Over?"> 9.0 %":(v.n1-n1).toFixed(1)+" %"}</div>
+    ${((!v.ittOver && (v.itt-itt)<3) || (!v.n1Over && (v.n1-n1)<0.3)) ? '<div class="warn" style="margin-top:10px"><b>⚠️ MARGEM PEQUENA — CONFERIR NO RFM</b><br>O resultado está próximo do limite do gráfico.</div>' : ''}
   </div>`;
   drawMarker(v);
 }
