@@ -1,0 +1,16 @@
+{
+  "name": "AW119 Power Assurance Check",
+  "short_name": "AW119 Power Check",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f8",
+  "theme_color": "#17202a",
+  "description": "Ferramenta auxiliar para Power Assurance Check do AW119 MKII G1000H.",
+  "icons": [
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}
