@@ -1,4 +1,4 @@
-const CACHE = "aw119-power-check-v4";
+const CACHE = "aw119-power-check-v5";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./apple-touch-icon.png"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));

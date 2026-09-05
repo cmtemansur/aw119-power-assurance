@@ -64,7 +64,7 @@ button.calc{width:100%;padding:14px;border:0;border-radius:12px;background:#1769
 <img id="graph" alt="Gráfico do Power Assurance Check">
 <div id="limitTQ" class="limit-line"></div><div id="limitITT" class="limit-line"></div><div id="limitN1" class="limit-line"></div><div id="tqDrop" class="tq-drop"></div><div id="paHighlight" class="pa-highlight"></div><div id="paLabel" class="pa-label"></div><div id="hline1" class="cross"></div><div id="hline2" class="cross"></div><div id="vlineITT" class="cross"></div><div id="vlineN1" class="cross"></div><div id="markerTQ" class="marker"></div><div id="markerITT" class="marker"></div><div id="markerN1" class="marker"></div>
 </div>
-<div class="legend"><b>Conferência obrigatória:</b> o marcador mostra a trajetória de leitura do nomograma. A leitura numérica é uma interpolação entre as linhas de referência (incluindo os trechos tracejados do nomograma); confirme sempre o ponto diretamente no gráfico do RFM antes de qualquer decisão operacional.</div>
+<div class="legend"><b>Conferência obrigatória:</b> o marcador mostra a trajetória de leitura do nomograma. A leitura numérica é uma interpolação somente dentro dos trechos efetivamente desenhados no nomograma (incluindo trechos tracejados); o aplicativo não extrapola uma linha de OAT além do ponto em que ela termina. Confirme sempre o ponto diretamente no gráfico do RFM antes de qualquer decisão operacional.</div>
 </div>
 
 <div class="card warn">
@@ -155,36 +155,18 @@ function interpPressure(mode,tq,alt){
   if(y0===null || y1===null) return null;
   return interp1(y0,y1,b[2]);
 }
-// As curvas de OAT possuem uma continuação tracejada após a linha vertical de referência do gráfico.
-// Para a leitura entre curvas, essa continuação também faz parte do nomograma.
-// Reconstrução dos trechos tracejados: inclinações locais obtidas da geometria dos segmentos
-// tracejados das próprias Figuras 4-5, 4-6 e 4-7. A continuação é aceita somente dentro
-// da escala publicada do painel; fora dela, o aplicativo não inventa um valor.
-const DASH_SLOPE={
-  hover:{itt:0.667,n1:0.811},
-  '130':{itt:0.819,n1:0.781},
-  '100':{itt:0.799,n1:0.875}
-};
-function xAtYGraph(curve,y,mode,typ){
-  const x=xAtY(curve,y); if(x!==null) return x;
-  const end=curve[curve.length-1];
-  if(y<end[1]) return null;
-  const xd=end[0]+DASH_SLOPE[mode][typ]*(y-end[1]);
-  // Só aceitar a continuação enquanto ela permanece dentro da escala publicada do painel.
-  if(xd>=-0.005 && xd<=1.35) return xd;
-  return null;
-}
+// A leitura de OAT deve usar somente os trechos efetivamente desenhados no RFM.
+// Não extrapolar uma curva quando ela não alcança o nível de pressão/torque da trajetória.
+// Os trechos tracejados que existem no nomograma já estão incorporados nos pontos digitalizados.
 function interpOAT(curves,oat,y,typ){
   const b=bracket(CAL.oats,oat);
   if(!b) return {ok:false,reason:'OAT fora da escala do nomograma.'};
 
-  // Reconstrói as 10 linhas de OAT no mesmo nível de pressão/torque.
-  // Pequenos desvios de digitalização são removidos por um envelope monotônico:
-  // no nomograma, temperaturas crescentes não podem produzir uma posição de leitura menor.
-  const xs=curves.map(c=>xAtYGraph(c,y,mode,typ));
+  const xs=curves.map(c=>xAtY(c,y));
   if(xs.some(v=>v===null)){
-    return {ok:false,reason:`Não foi possível reconstruir todas as linhas de OAT na trajetória solicitada.`};
+    return {ok:false,reason:'A linha de OAT informada não alcança a trajetória neste ponto do nomograma. Não é possível determinar ITT/N1 para esta combinação.'};
   }
+  // Pequenos desvios de digitalização são removidos por um envelope monotônico.
   for(let i=1;i<xs.length;i++) xs[i]=Math.max(xs[i],xs[i-1]);
   const x=interp1(xs[b[0]],xs[b[1]],b[2]);
   const usedDash=curves[b[0]][curves[b[0]].length-1][1]<y || curves[b[1]][curves[b[1]].length-1][1]<y;
